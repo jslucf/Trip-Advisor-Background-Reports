@@ -1,0 +1,325 @@
+---
+output: 
+  html_document: 
+    toc: yes
+---
+This notebook will scrape a variety of info off Trip Advisor (address, rating, amenity lists), and then writeup a background paragraph on each hotel. The writeups will be written to a CSV at the end. It will also write an additional CSV with data needed to create a Google Map of all the properties.
+
+
+Setup the WD
+```{r setup, include=F}
+knitr::opts_chunk$set(echo=T)
+
+wd="P://2017 Projects//068-17 Miami Valley Gaming HMA//HMA info"
+
+opts_knit$set(root.dir = normalizePath(wd ))
+```
+
+
+
+Input the name of the subject site being analyzed in the report, as well as the name of the eventual output file of all of the writeups that you'd like.
+
+```{r}
+subject.site = "Miami Valley Gaming"
+
+output.file = "writeups.csv"
+```
+
+Set the working directory.
+```{r, warning=FALSE}
+library(lettercase)
+library(rvest)
+library(dplyr)
+library(knitr)
+
+
+```
+
+Load data.
+```{r}
+df = read.csv("clipboard", header=T, sep="\t", stringsAsFactors = F)
+```
+
+Some cleanup.
+```{r}
+df$STR.Code. = NULL
+df$Last.Month = NULL
+df$Associated.Companies = NULL
+
+names(df) = c("Name", "Distance", "Rooms", "Scale", "Date.Open", "tripadvisor.url")
+
+```
+
+Function to scrape hotel address off TA
+```{r}
+
+getAddress = function(url){
+  
+   address = read_html(url) %>%
+      html_node(".colCnt2 , .street-address") %>%
+      html_children() %>% html_text()
+    
+   
+   #Sometime the address is located at .colCnt3 instead of 2, so this statement is checking for that
+   if( is.na(address[2]) == F ){
+     return(address[4])
+     
+   } else{
+      address = read_html(url) %>%
+      html_node(".colCnt3 , .street-address") %>%
+      html_children() %>% html_text()
+      
+      return(address[4])
+   }
+}
+
+```
+
+This function is used to scraped the TripAdvisor Rating, which only needs the TA url.
+
+```{r}
+getRating = function(url){
+  
+  #Gets TA rating
+  rating <- read_html(url) %>%
+    html_node(".bubble_rating") %>%
+    html_children() %>%
+    html_attr("alt") 
+  
+  if(any(grep("bubbles", rating)) == T){
+    rating = rating %>%
+      gsub(" of 5 bubbles", "", .) %>%
+      as.numeric()
+    } 
+  else{
+      rating = NA
+    }
+  
+  
+  return(rating)
+}
+```
+
+This function takes in a vector of the amenities scraped off TA, and then writes up the sentences for each of the types of amenities. This will be used to write up the amenities section of each hotel's report.
+
+```{r}
+amenity.write = function(vector){
+  #if there are multiple amenities listed
+  if(length(vector) >= 3) {
+    
+    #removes the word amenities from the first item, which always ends with "amenities"
+    firstword = gsub(str_cap_words(vector[1]), pattern = "Amenities", replacement ="")
+    
+    #puts the sentence together
+    sentence = paste(firstword,
+                     " amenities include: " ,
+                     paste(vector[2:length(vector)], collapse = ", "),
+                     ".", sep=""
+    )
+  } else if(length(vector) == 2){
+    
+    sentence = paste("The only ", 
+                     gsub(tolower(vector[1]), pattern= "amenities", replacement = ""),
+                     "amenity of the hotel is " ,
+                     tolower(vector[2]),
+                     ".", sep=""
+    )
+  } else{
+    
+    firstword = gsub(str_lower(vector[1]), pattern = "Amenities", replacement ="")
+    
+    sentence = paste("The hotel has not listed any ", firstword,
+                     " amenities online.", sep=""
+    )
+  }
+  
+  return(sentence)
+  
+}
+```
+
+This loop gets the addresses using the TA URls provided in df
+```{r}
+for(i in 1:nrow(df)){
+
+  df$address[i] = getAddress(df$tripadvisor.url[i])
+}
+```
+
+Loop through all of the URLs in DF to scrape the different types of amenities and the TA rating. The loop will then combine the sentences for all 3 types of amenities into one paragraph, and then add it to the df2 object created to store the results.
+
+```{r}
+df2 = data.frame(Name = df$Name, amenity.sentence = NA, rating=0)
+
+for(i in 1:nrow(df2)){
+  
+  url = df$tripadvisor.url[i] 
+  
+  rating = getRating(url)
+  
+  #Gets list of the top amenities
+  top.amenities <- read_html(url) %>%
+    html_node(".top_amenities") %>%
+    html_children() %>% 
+    html_text() %>%
+    tolower()
+  
+  #Hotel_amentities
+  hotel.amenities <- read_html(url) %>%
+    html_node(".hotel_amenities") %>%
+    html_children() %>% 
+    html_text()%>%
+    tolower()
+  
+  #Room amenities
+  room.amenities <- read_html(url) %>%
+    html_node(".room_amenities") %>%
+    html_children() %>% 
+    html_text()%>%
+    tolower()
+  
+  #Things to do list, which I haven't included in anything yet
+  #things.to.do = read_html(url) %>%
+   # html_node(".things_to_do") %>%
+    #html_children() %>% 
+    #html_text()%>%
+    #tolower()
+  
+  #Write the sentences for amenity types
+  top.amenity.sent = amenity.write(top.amenities)
+  hotel.amenity.sent = amenity.write(hotel.amenities)
+  room.amenity.sent = amenity.write(room.amenities)
+  
+  #Make sure there were amenities listed
+  if(any(grep(pattern = " NA ", x = top.amenity.sent)) == F){
+    #Add them all into one writeup
+    amenity.sentence = paste(top.amenity.sent, hotel.amenity.sent, room.amenity.sent)
+  } else{
+    amenity.sentence = "There were no amenities of any kind listed on the company's Trip Advisor page."
+  }
+  
+  #Add them all to the results DF
+  df2[i,] = cbind(df$Name[i], amenity.sentence, rating)
+}
+```
+
+Combine the amenity sentences written by the last loop and the TA rating with the original DF we used with the STR data.
+
+```{r}
+df3 = merge(df, df2, by.x = "Name", by.y = "Name") 
+```
+
+This loop writes a descriptive wording of the subset in which the number of rooms of each hotel falls into (above average, average, etc.). Anything above the 75th percentile is above average, below the 25th percentile is below average, and between the two (IQR) is considered "within the average range". These descriptive labels will be added to the final writeup to give some context onto the number of rooms for each hotel.
+
+```{r}
+room.summary = summary(df3$Rooms)
+
+for(i in 1:nrow(df3)){
+  #If rooms no. is the maximum
+  if(df3$Rooms[i] == room.summary[6]){
+      df3$room.group[i] = "the most"
+      
+  #If rooms no. is less than the maximum & above 3QR
+  } else if (df3$Rooms[i] < room.summary[6] & (df3$Rooms[i] >= room.summary[5]) ){
+      df3$room.group[i] = "above average"
+
+  #If rooms no. is in IQR    
+  } else if (df3$Rooms[i] < room.summary[5] & (df3$Rooms[i] >= room.summary[2]) ){
+      df3$room.group[i] = "within the average range"
+      
+  # If rooms no. is below 1QR but not the min
+  } else if (df3$Rooms[i] < room.summary[2] & (df3$Rooms[i] > room.summary[1]) ){
+    df3$room.group[i] = "below average"
+  
+  #The minimum
+  } else{
+      df3$room.group[i] = "the fewest"  
+  }
+}
+```
+
+Finally, this loop goes through each hotel and writes the background paragraph, which pretty much takes into account all variables from the STR data and the TA data scraped earlier (rating, amenity writeups). The results are stored in a list.
+```{r}
+writeups = list()
+
+
+for(i in 1:nrow(df3)){
+  
+  row = df3[i, ]
+  
+  if(is.na(df3[i, "address"]) ==  F){
+  
+    writeups[i] = paste("The",
+                        row[ , "Name"], 
+                        "is located at", 
+                        paste(row[, "address"], ",", sep=""),
+                        "which is located approximately",
+                        row[, "Distance"],
+                        "miles from", 
+                        paste(subject.site, ".", sep=""),
+                        "The",
+                        tolower(row[, "Scale"]),
+                        "hotel currently has a Trip Advisor rating of" ,
+                        row[, "rating"],
+                        "out of 5.",
+                        "It opened around",
+                        paste(row[, "Date.Open"], ",", sep=""),
+                        "and it has",
+                        row[, "Rooms"], 
+                        "rooms, which is",
+                        row[, "room.group"],
+                        "for the area.",
+                        row[,"amenity.sentence"]
+                        )
+    
+  } else{   #if scrape didn't come up with address
+    writeups[i] = paste("The",
+                        row[ , "Name"], 
+                        "is located approximately",
+                        row[, "Distance"],
+                        "miles from", 
+                        paste(subject.site, ".", sep=""),
+                        "The",
+                        tolower(row[, "Scale"]),
+                        "hotel currently has a Trip Advisor rating of" ,
+                        row[, "rating"],
+                        "out of 5.",
+                        "It opened around",
+                        paste(row[, "Date.Open"], ",", sep=""),
+                        "and it has",
+                        row[, "Rooms"], 
+                        "rooms, which is",
+                        row[, "room.group"],
+                        "for the area.",
+                        row[,"amenity.sentence"]
+                        )
+    
+  }
+}
+```
+
+This takes the writeups from the last step and writes them to a csv file. You can now take the CSV, copy it into Word, and format and proofread it. 
+
+Generally speaking, the writeups are going to be pretty neat, but there will be some occasional adjustments needed (for instance, if only one amenity was listed on TA, then the writeup might have a sentence like, "the only amenity is microwave," instead of the proper, "a microwave").
+
+```{r}
+names(writeups) = df$Name
+
+for(i in 1:length(writeups)){
+  d<-paste0('\n\n',names(writeups)[i],'\n\n')
+  capture.output(cat(d),file= output.file,append=T)
+  write.table(writeups[i],file=output.file,append= T, sep=',', row.names = F, col.names=F)
+}
+```
+
+
+This just takes the name of each hotel and its address, and then writes a CSV. This can be uploaded to Google Maps to make a map. Reminder that the subject site is not included.
+
+```{r}
+
+map.data = df3[, c("Name", "address")]
+
+write.csv(x = map.data, file= "map_data.csv", row.names=F)
+
+```
+
