@@ -303,7 +303,7 @@ This takes the writeups from the last step and writes them to a csv file. You ca
 Generally speaking, the writeups are going to be pretty neat, but there will be some occasional adjustments needed (for instance, if only one amenity was listed on TA, then the writeup might have a sentence like, "the only amenity is microwave," instead of the proper, "a microwave").
 
 ```{r}
-names(writeups) = df$Name
+names(writeups) = df3$Name
 
 for(i in 1:length(writeups)){
   d<-paste0('\n\n',names(writeups)[i],'\n\n')
